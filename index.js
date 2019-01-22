@@ -10,20 +10,30 @@ const hostname = require('os').hostname();
 const util = require('util');
 const format = util.format;
 const qs = require('querystring');
+const Transport = require('winston-transport');
 
-class Transport { //jshint ignore:line
+class DatadogTransport extends Transport { //jshint ignore:line
     /**
      * @constructor Transport
      * @params {object} credentials
      * @example
      * new Transport({
      *   api_key: ...,
-     *   app_key: ...
+     *   application_key: ...
      * });
      */
-    constructor(credentials) {
+    constructor(options) {
+        super(options)
         var api = this;
-        var paths = Transport.API_ENDPOINT.split('/').filter(Boolean);
+        const credentials = {
+            api_key: options.api_key,
+            application_key: options.application_key
+        }; 
+        if (options.minimum_log_level) {
+            const i = api.allowed_loglevels.indexOf(options.minimum_log_level);
+            api.allowed_loglevels = api.allowed_loglevels.slice(i, api.allowed_loglevels.length);
+        }
+        var paths = DatadogTransport.API_ENDPOINT.split('/').filter(Boolean);
         api.name = 'Datadog';
         api.attachResults = false;
         //set to true to force transport to use text in place of the title
@@ -33,7 +43,7 @@ class Transport { //jshint ignore:line
             hostname: paths[1],
             path: format('/%s/v%d/events?%s',
                     paths[2],
-                    Transport.API_VERSION,
+                    DatadogTransport.API_VERSION,
                     qs.stringify(credentials)),
             method: 'POST',
             headers: {
@@ -79,6 +89,9 @@ class Transport { //jshint ignore:line
         if (api.loglevels[loglevel]) {
             loglevel = api.loglevels[loglevel];
         }
+        if (!api.allowed_loglevels.includes(loglevel)) {
+            return;
+        }
         var req = api.request(api.requestOptions, (res) => {
             var data = '';
             res.on('data', (buffer) => {
@@ -86,8 +99,12 @@ class Transport { //jshint ignore:line
             });
             res.on('end', () => {
                 if (api.attachResults) {
-                    res.body = JSON.parse(data);
-                    api.logger.emit.call(api.logger, 'DatadogResult', res);
+                    try {
+                        res.body = JSON.parse(data);
+                        api.logger.emit('DatadogResult', res);
+                    } catch (e) {
+                        console.error('Failed to emit DatadogResult event', e);
+                    }
                 }
                 callback();
             });
@@ -115,6 +132,10 @@ class Transport { //jshint ignore:line
         if (opts.text.length > 4000) {
             opts.text = opts.text.substr(0, 4000);
         }
+
+        req.on('error', (e) => {	
+            console.error(e);	
+        });
         req.write(JSON.stringify(opts));
         req.end();
         opts.text = null;
@@ -122,17 +143,28 @@ class Transport { //jshint ignore:line
     }
 }
 
-Transport.API_VERSION = 1;
-Transport.API_ENDPOINT = 'https://app.datadoghq.com/api/';
+DatadogTransport.API_VERSION = 1;
+DatadogTransport.API_ENDPOINT = 'https://api.datadoghq.com/api/';
 /**
  * overrides for winston logging levels
  */
-Transport.prototype.loglevels = {
+DatadogTransport.prototype.loglevels = {
     silly: 'info',
     debug: 'info',
     verbose: 'info',
     warn: 'warning'
 };
+
+DatadogTransport.prototype.allowed_loglevels = [
+    'silly', 
+    'debug', 
+    'verbose', 
+    'info', 
+    'warning', 
+    'error', 
+    'severe', 
+    'none'
+];
 
 /**
  * Exposes endpoint options for Data-Dog
@@ -160,11 +192,11 @@ TransportOptions.prototype.host = hostname;
 TransportOptions.prototype.tags = [
     'env:' + (process.env.NODE_ENV || 'local')
 ];
-TransportOptions.prototype.alert_type = 'info'; // or error; warning; success
+TransportOptions.prototype.alert_type = 'warning'; // or error; warning; success
 TransportOptions.prototype.aggregation_key = null; //arbitrary value
 TransportOptions.prototype.source_type_name = null; // options = nagios; hudson; jenkins; user; my apps; feed; chef; puppet; git; bitbucket; fabric; capistrano
 
 //expose Transport options
-Transport.prototype.Options = TransportOptions;
+DatadogTransport.prototype.Options = TransportOptions;
 
-module.exports = Transport;
+module.exports = DatadogTransport;

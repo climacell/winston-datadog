@@ -22,7 +22,8 @@ const winston = require('winston');
 const DatadogTransport = require('winston-datadog');
 const ddTransport = new DatadogTransport({
     api_key: '',
-    app_key: '' //optional
+    application_key: '', //optional
+    minimum_log_level: 'warning' //optional
 });
 const logger = new winston.Logger({
     transports: [
